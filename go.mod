@@ -14,8 +14,11 @@ require (
 	github.com/urfave/cli v1.18.0
 	go.etcd.io/bbolt v1.3.2
 	golang.org/x/net v0.0.0-20190628185345-da137c7871d7
+	golang.org/x/crypto v0.0.0-20190701094942-4def268fd1a4
 	golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45
 	golang.org/x/sync v0.0.0-20190423024810-112230192c58
+	golang.org/x/sys v0.0.0-20190813064441-fde4db37ae7a // indirect
+	golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7
 	google.golang.org/api v0.7.0
 	google.golang.org/grpc v1.22.0
 	gopkg.in/macaroon.v2 v2.0.0
