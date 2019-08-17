@@ -3,7 +3,6 @@ package backup
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/xerrors"
 
 	"github.com/breez/breez/data"
 )
@@ -60,7 +61,7 @@ func (b *Manager) requestBackup(delay time.Duration) {
 // Restore handles all the restoring process:
 // 1. Downloading the backed up files for a specific node id.
 // 2. Put the backed up files in the right place according to the configuration
-func (b *Manager) Restore(nodeID string, key string) ([]string, error) {
+func (b *Manager) Restore(nodeID string, pin string) ([]string, error) {
 	backupID, err := b.getBackupIdentifier()
 	if err != nil {
 		return nil, err
@@ -69,25 +70,24 @@ func (b *Manager) Restore(nodeID string, key string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(files) != 3 {
+
+	if len(files) != 3 && len(files) != 4 {
 		return nil, fmt.Errorf("wrong number of backup files %v", len(files))
 	}
 
 	// If we got an encryption key, let's decrypt the files
-	if key != "" {
-		decKey := generateEncryptionKey(key)
-		for i, p := range files {
-			destPath := p + ".decrypted"
-			err = decryptFile(p, destPath, decKey)
-			if err != nil {
-				return nil, errors.New("Failed to restore backup due to incorrect PIN")
-			}
-			if err = os.Remove(files[i]); err != nil {
-				return nil, err
-			}
-			if err = os.Rename(destPath, files[i]); err != nil {
-				return nil, err
-			}
+	if pin != "" {
+		err = decryptFiles(pin, files)
+		if err != nil {
+			return nil, xerrors.Errorf("Error while decrypting files: %w", err)
+		}
+	}
+
+	// If 3 files, then salt file needs to be created
+	if len(files) == 3 {
+		err = initSalt()
+		if err != nil {
+			return nil, xerrors.Errorf("Migration to Scrypt failed: %w", err)
 		}
 	}
 
@@ -95,6 +95,7 @@ func (b *Manager) Restore(nodeID string, key string) ([]string, error) {
 		"wallet.db":  "data/chain/bitcoin/{{network}}",
 		"channel.db": "data/graph/{{network}}",
 		"breez.db":   "",
+		SaltFile:     "",
 	}
 	var targetFiles []string
 	for _, f := range files {
@@ -161,7 +162,7 @@ func (b *Manager) Start() error {
 			select {
 			case <-b.backupRequestChan:
 				b.log.Infof("start processing backup request")
-				//First get the last pending request in the database
+				// First get the last pending request in the database
 				pendingID, err := b.db.lastBackupRequest()
 				if pendingID == 0 {
 					continue
@@ -238,7 +239,7 @@ func (b *Manager) SetEncryptionPIN(pin string) error {
 		return err
 	}
 	b.mu.Lock()
-	b.encryptionKey = generateEncryptionKey(pin)
+	b.encryptionKey = deriveEncryptionKey(pin)
 	b.mu.Unlock()
 
 	// After changing the encryption PIN we'll backup if we have

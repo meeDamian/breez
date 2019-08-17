@@ -2,17 +2,20 @@ package backup
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math/big"
 	"os"
 	"path"
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btclog"
+
 	"github.com/breez/breez/config"
 	"github.com/breez/breez/data"
-	"github.com/btcsuite/btclog"
 )
 
 type MockAuthService struct{}
@@ -326,7 +329,38 @@ func TestBackupConflict(t *testing.T) {
 }
 
 func TestEncryptDecryptFiles(t *testing.T) {
-	key := generateEncryptionKey("123456")
+	key := deriveSha256Key("123456")
+	originalContent := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	dir := os.TempDir()
+	file := path.Join(dir, "sourceFile")
+	encryptedFile := path.Join(dir, "encryptedFile")
+	decryptedFile := path.Join(dir, "decryptedFile")
+	if err := ioutil.WriteFile(file, originalContent, os.ModePerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := encryptFile(file, encryptedFile, key); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := decryptFile(encryptedFile, decryptedFile, key); err != nil {
+		t.Fatal(err)
+	}
+	content, err := ioutil.ReadFile(decryptedFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Compare(content, originalContent) != 0 {
+		t.Error("Failed to decrypt file", content)
+	}
+}
+
+func TestEncryptDecryptFilesScrypt(t *testing.T) {
+	salt, err := generateSalt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := deriveScryptKey("123456", salt)
 	originalContent := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9}
 	dir := os.TempDir()
 	file := path.Join(dir, "sourceFile")
@@ -422,5 +456,40 @@ func waitForBackupEnd(msgChan chan data.NotificationEvent) {
 		if event.Type != data.NotificationEvent_BACKUP_REQUEST {
 			break
 		}
+	}
+}
+
+// NOTE: Slower is better
+func BenchmarkDeriveScryptKey(b *testing.B) {
+	salt, err := generateSalt()
+	if err != nil {
+		b.Error(err)
+	}
+
+	// PIN can be anything from 000000 to 999999
+	pin, err := rand.Int(rand.Reader, big.NewInt(1e6))
+	if err != nil {
+		b.Error("Unable to generate PIN")
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		deriveScryptKey(fmt.Sprintf("%06d", pin), salt)
+	}
+}
+
+// NOTE: Slower is better
+func BenchmarkDeriveSha256Key(b *testing.B) {
+	// PIN can be anything from 000000 to 999999
+	pin, err := rand.Int(rand.Reader, big.NewInt(1e6))
+	if err != nil {
+		b.Error("Unable to generate PIN")
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		deriveSha256Key(fmt.Sprintf("%06d", pin))
 	}
 }
